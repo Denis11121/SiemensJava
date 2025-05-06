@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.*;
+import java.util.stream.Collectors;
 
 @Service
 public class ItemService {
@@ -53,34 +54,47 @@ public class ItemService {
      * Examine how errors are handled and propagated
      * Consider the interaction between Spring's @Async and CompletableFuture
      */
+
+
+    /**
+     * Processes all items asynchronously.
+     * Each item is fetched, status updated, and saved.
+     * Thread-safe and returns only successfully processed items.
+     */
     @Async
     public List<Item> processItemsAsync() {
+        List<Long> ids = itemRepository.findAllIds();
 
-        List<Long> itemIds = itemRepository.findAllIds();
+        // Thread-safe collection for processed items
+        ConcurrentLinkedQueue<Item> processedItems = new ConcurrentLinkedQueue<>();
 
-        for (Long id : itemIds) {
-            CompletableFuture.runAsync(() -> {
-                try {
-                    Thread.sleep(100);
-
-                    Item item = itemRepository.findById(id).orElse(null);
-                    if (item == null) {
-                        return;
+        // Create a list of async tasks
+        List<CompletableFuture<Void>> futures = ids.stream()
+                .map(id -> CompletableFuture.runAsync(() -> {
+                    try {
+                        // Retrieve item and mark it as processed
+                        Optional<Item> optItem = itemRepository.findById(id);
+                        optItem.ifPresent(item -> {
+                            item.setStatus("PROCESSED");
+                            itemRepository.save(item);
+                            processedItems.add(item);
+                        });
+                    } catch (Exception e) {
+                        // Log or handle errors if needed
+                        System.err.println("Error processing item ID " + id + ": " + e.getMessage());
                     }
+                }, executor))
+                .collect(Collectors.toList());
 
-                    processedCount++;
-
-                    item.setStatus("PROCESSED");
-                    itemRepository.save(item);
-                    processedItems.add(item);
-
-                } catch (InterruptedException e) {
-                    System.out.println("Error: " + e.getMessage());
-                }
-            }, executor);
+        // Wait for all async operations to complete
+        CompletableFuture<Void> all = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
+        try {
+            all.get(); // blocks until all are finished
+        } catch (InterruptedException | ExecutionException e) {
+            throw new RuntimeException("Error processing items", e);
         }
 
-        return processedItems;
+        return new ArrayList<>(processedItems);
     }
 
 }

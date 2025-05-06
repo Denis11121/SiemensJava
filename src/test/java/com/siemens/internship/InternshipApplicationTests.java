@@ -97,3 +97,4 @@ class InternshipApplicationTests {
 		updated.forEach(item -> assertThat(item.getStatus()).isEqualTo("PROCESSED"));
 	}
 }
+
